@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/build"
 	"os"
+	"poc-go-yaegi/functions"
 
 	"github.com/traefik/yaegi/interp"
 	"github.com/traefik/yaegi/stdlib"
@@ -50,17 +51,17 @@ func main() {
 	fmt.Println("Script compilado com sucesso")
 	fmt.Println("Executando script...")
 
-	calculateOperationStep := script.Interface().(func(map[string]string))
+	calculateOperationStep := script.Interface().(func(map[string]string, interface{}) (interface{}, error))
 
 	params := map[string]string{
 		"qtde_parcelas": "12",
 	}
 
-	// inputOperation := functions.Operation{
-	// 	Amount: 1000.00,
-	// }
+	inputOperation := functions.Operation{
+		Amount: 1000.00,
+	}
 
-	calculateOperationStep(params)
+	_, err = calculateOperationStep(params, inputOperation)
 	if err != nil {
 		fmt.Println("Erro ao executar script: ", err)
 		return
