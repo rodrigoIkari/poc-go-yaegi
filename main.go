@@ -5,6 +5,7 @@ import (
 	"go/build"
 	"os"
 	"poc-go-yaegi/functions"
+	"reflect"
 
 	"github.com/traefik/yaegi/interp"
 	"github.com/traefik/yaegi/stdlib"
@@ -16,26 +17,34 @@ func main() {
 
 	fmt.Println("Compilando script...")
 
-	// importFunctions()
-
+	// Registrar bibliotecas padrão disponíveis para o script
 	i.Use(interp.Exports{
-		"math/math": stdlib.Symbols["math/math"],
-		"fmt/fmt":   stdlib.Symbols["fmt/fmt"],
-		"time/time": stdlib.Symbols["time/time"],
-		// "poc-go-yaegi/functions": stdlib.Symbols["poc-go-yaegi/functions"],
+		"math/math":       stdlib.Symbols["math/math"],
+		"fmt/fmt":         stdlib.Symbols["fmt/fmt"],
+		"time/time":       stdlib.Symbols["time/time"],
+		"strconv/strconv": stdlib.Symbols["strconv/strconv"],
+	})
+
+	// Registrar o pacote functions com seus tipos
+	i.Use(interp.Exports{
+		"poc-go-yaegi/functions/functions": map[string]reflect.Value{
+			"Operation":   reflect.ValueOf((*functions.Operation)(nil)),
+			"Installment": reflect.ValueOf((*functions.Installment)(nil)),
+			"Component":   reflect.ValueOf((*functions.Component)(nil)),
+		},
 	})
 
 	i.ImportUsed()
 
-	script_file, err := os.ReadFile("script/script.go")
+	scriptFile, err := os.ReadFile("script/script.go")
 	if err != nil {
 		fmt.Println("Erro ao abrir script: ", err)
 		return
 	}
 
-	script_code := string(script_file)
+	scriptCode := string(scriptFile)
 
-	_, err = i.Eval(script_code)
+	_, err = i.Eval(scriptCode)
 
 	if err != nil {
 		fmt.Println("Erro ao interpretar arquivo de script: ", err)
@@ -51,33 +60,40 @@ func main() {
 	fmt.Println("Script compilado com sucesso")
 	fmt.Println("Executando script...")
 
-	calculateOperationStep := script.Interface().(func(map[string]string, interface{}) (interface{}, error))
+	// Type assertion segura
+	calculateOperationStep, ok := script.Interface().(func(map[string]string, functions.Operation) (*functions.Operation, error))
+	if !ok {
+		fmt.Println("Erro: função CalculateOperationStep tem assinatura incorreta")
+		return
+	}
 
 	params := map[string]string{
-		"qtde_parcelas": "12",
+		"qtde_parcelas": "10",
+		"taxa_juros":    "0.02",
 	}
 
 	inputOperation := functions.Operation{
-		Amount: 1000.00,
+		Amount: 1500.00,
 	}
 
-	_, err = calculateOperationStep(params, inputOperation)
+	// Validar entrada
+	if inputOperation.Amount <= 0 {
+		fmt.Println("Erro: valor da operação deve ser positivo")
+		return
+	}
+
+	result, err := calculateOperationStep(params, inputOperation)
 	if err != nil {
 		fmt.Println("Erro ao executar script: ", err)
 		return
 	}
 
-	// fmt.Println("Valor Total da Operação: ", op.TotalAmount)
+	fmt.Printf("\n=== Resultado do Cálculo ===\n")
+	fmt.Printf("Valor Financiado: R$ %.2f\n", result.Amount)
+	fmt.Printf("Quantidade de Parcelas: %d\n", result.InstallmentsQty)
+	fmt.Printf("Valor Total a Pagar: R$ %.2f\n", result.TotalAmount)
+	fmt.Printf("Valor de Cada Parcela: R$ %.2f\n\n", result.Installments[0].Amount)
 
 	fmt.Println("Script finalizado com sucesso!")
 
 }
-
-// func importFunctions() {
-// 	stdlib.Symbols["github.com/rodrigoIkari/poc-go-yaegi/functions"] = map[string]reflect.Value{
-// 		// function, constant and variable definitions
-// 		"Operation":   reflect.ValueOf(functions.Operation{}),
-// 		"Installment": reflect.ValueOf(functions.Installment{}),
-// 		"Component":   reflect.ValueOf(functions.Component{}),
-// 	}
-// }
