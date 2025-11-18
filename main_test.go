@@ -1,11 +1,15 @@
 package main
 
 import (
+	"fmt"
 	"go/build"
+	"math"
 	"os"
 	"poc-go-yaegi/functions"
 	"reflect"
+	"sort"
 	"testing"
+	"time"
 
 	"github.com/traefik/yaegi/interp"
 	"github.com/traefik/yaegi/stdlib"
@@ -281,5 +285,162 @@ func TestScriptWithUnregisteredLibrary(t *testing.T) {
 	if len(errorMsg) > 0 {
 		// Apenas log do erro, já validamos que ele existe
 		t.Logf("Biblioteca não registrada causou erro como esperado: %s", errorMsg)
+	}
+}
+
+// TestPerformance_1000Executions testa performance com 1000 execuções
+// Mede tempo mínimo, médio, P95 e máximo de execução
+func TestPerformance_1000Executions(t *testing.T) {
+	// Configurar o interpretador Yaegi (setup único)
+	i := interp.New(interp.Options{GoPath: build.Default.GOPATH})
+
+	i.Use(interp.Exports{
+		"math/math":       stdlib.Symbols["math/math"],
+		"fmt/fmt":         stdlib.Symbols["fmt/fmt"],
+		"time/time":       stdlib.Symbols["time/time"],
+		"strconv/strconv": stdlib.Symbols["strconv/strconv"],
+	})
+
+	i.Use(interp.Exports{
+		"poc-go-yaegi/functions/functions": map[string]reflect.Value{
+			"Operation":   reflect.ValueOf((*functions.Operation)(nil)),
+			"Installment": reflect.ValueOf((*functions.Installment)(nil)),
+			"Component":   reflect.ValueOf((*functions.Component)(nil)),
+		},
+	})
+
+	i.ImportUsed()
+
+	// Carregar e compilar o script silencioso (sem prints) para performance
+	scriptFile, err := os.ReadFile("script/script_silent.go")
+	if err != nil {
+		t.Fatalf("Erro ao ler arquivo de script: %v", err)
+	}
+
+	_, err = i.Eval(string(scriptFile))
+	if err != nil {
+		t.Fatalf("Erro ao compilar script: %v", err)
+	}
+
+	script, err := i.Eval("script.CalculateOperationStepSilent")
+	if err != nil {
+		t.Fatalf("Erro ao obter função: %v", err)
+	}
+
+	calculateOperationStep, ok := script.Interface().(func(map[string]string, functions.Operation) (*functions.Operation, error))
+	if !ok {
+		t.Fatal("Type assertion falhou")
+	}
+
+	// Preparar dados de entrada (reutilizados em todas as execuções)
+	params := map[string]string{
+		"qtde_parcelas": "12",
+		"taxa_juros":    "0.02",
+	}
+
+	inputOperation := functions.Operation{
+		Amount: 1000.00,
+	}
+
+	// Array para armazenar os tempos de execução
+	const numExecutions = 1000
+	executionTimes := make([]time.Duration, numExecutions)
+
+	fmt.Printf("\n=== Teste de Performance - %d Execuções ===\n", numExecutions)
+	fmt.Println("Executando...")
+
+	// Executar 1000 vezes e medir o tempo de cada execução
+	for i := 0; i < numExecutions; i++ {
+		startTime := time.Now()
+
+		_, err := calculateOperationStep(params, inputOperation)
+		if err != nil {
+			t.Fatalf("Erro na execução %d: %v", i+1, err)
+		}
+
+		executionTimes[i] = time.Since(startTime)
+
+		// Mostrar progresso a cada 100 execuções
+		if (i+1)%100 == 0 {
+			fmt.Printf("  Progresso: %d/%d execuções\n", i+1, numExecutions)
+		}
+	}
+
+	// Ordenar os tempos para calcular percentis
+	sortedTimes := make([]time.Duration, numExecutions)
+	copy(sortedTimes, executionTimes)
+	sort.Slice(sortedTimes, func(i, j int) bool {
+		return sortedTimes[i] < sortedTimes[j]
+	})
+
+	// Calcular estatísticas
+	minTime := sortedTimes[0]
+	maxTime := sortedTimes[numExecutions-1]
+
+	// Calcular média
+	var totalTime time.Duration
+	for _, t := range executionTimes {
+		totalTime += t
+	}
+	avgTime := totalTime / numExecutions
+
+	// Calcular P95 (percentil 95)
+	p95Index := int(math.Ceil(float64(numExecutions) * 0.95)) - 1
+	if p95Index >= numExecutions {
+		p95Index = numExecutions - 1
+	}
+	p95Time := sortedTimes[p95Index]
+
+	// Calcular P50 (mediana)
+	p50Index := numExecutions / 2
+	p50Time := sortedTimes[p50Index]
+
+	// Calcular desvio padrão
+	var sumSquaredDiff float64
+	for _, t := range executionTimes {
+		diff := float64(t - avgTime)
+		sumSquaredDiff += diff * diff
+	}
+	stdDev := time.Duration(math.Sqrt(sumSquaredDiff / float64(numExecutions)))
+
+	// Exibir resultados
+	fmt.Println("\n=== Resultados do Teste de Performance ===")
+	fmt.Printf("Número de Execuções: %d\n\n", numExecutions)
+	fmt.Printf("Tempo Mínimo:   %v\n", minTime)
+	fmt.Printf("Tempo Médio:    %v\n", avgTime)
+	fmt.Printf("Tempo Mediana:  %v (P50)\n", p50Time)
+	fmt.Printf("Tempo P95:      %v\n", p95Time)
+	fmt.Printf("Tempo Máximo:   %v\n", maxTime)
+	fmt.Printf("Desvio Padrão:  %v\n\n", stdDev)
+
+	// Conversão para microsegundos para melhor visualização
+	fmt.Println("=== Em Microsegundos (µs) ===")
+	fmt.Printf("Mínimo:   %d µs\n", minTime.Microseconds())
+	fmt.Printf("Médio:    %d µs\n", avgTime.Microseconds())
+	fmt.Printf("Mediana:  %d µs (P50)\n", p50Time.Microseconds())
+	fmt.Printf("P95:      %d µs\n", p95Time.Microseconds())
+	fmt.Printf("Máximo:   %d µs\n", maxTime.Microseconds())
+	fmt.Printf("Std Dev:  %d µs\n\n", stdDev.Microseconds())
+
+	// Calcular throughput
+	totalTimeSeconds := totalTime.Seconds()
+	throughput := float64(numExecutions) / totalTimeSeconds
+	fmt.Printf("Throughput: %.2f execuções/segundo\n", throughput)
+	fmt.Printf("Tempo Total: %v\n\n", totalTime)
+
+	// Logging para o test output
+	t.Logf("Performance Stats - %d execuções:", numExecutions)
+	t.Logf("  Min: %v | Avg: %v | P50: %v | P95: %v | Max: %v",
+		minTime, avgTime, p50Time, p95Time, maxTime)
+	t.Logf("  Throughput: %.2f exec/s", throughput)
+
+	// Validações para garantir que o desempenho está aceitável
+	// Ajuste estes valores conforme necessário
+	if avgTime > 10*time.Millisecond {
+		t.Logf("AVISO: Tempo médio (%.2fms) está acima do esperado", avgTime.Seconds()*1000)
+	}
+
+	if p95Time > 20*time.Millisecond {
+		t.Logf("AVISO: P95 (%.2fms) está acima do esperado", p95Time.Seconds()*1000)
 	}
 }

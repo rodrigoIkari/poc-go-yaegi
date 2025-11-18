@@ -69,7 +69,7 @@ func main() {
 
 	params := map[string]string{
 		"qtde_parcelas": "10",
-		"taxa_juros":    "0.02",
+		"taxa_juros":    "0.01",
 	}
 
 	inputOperation := functions.Operation{
